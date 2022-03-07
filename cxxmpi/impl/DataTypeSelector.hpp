@@ -6,6 +6,16 @@ namespace cxxmpi {
 
 template <class T> struct DataTypeSelector {};
 
+/* Implementation note.
+ * Though MPI_CHAR and so on are compile time constants, in some
+ * implementations they are defined as '#define MPI_CHAR ((void *) smth)'
+ * C++ forbids usage of such casts in constexpr contexts, so the following
+ * doesn't work:
+ *   template <> struct DataTypeSelector<char> {
+ *     static constexpr int value = MPI_CHAR;
+ *   }
+ * Thus value is defined as a function
+ */
 #define DECLARE_MAPPING(type, mpitype)                                         \
   template <> struct DataTypeSelector<type> {                                  \
     static MPI_Datatype value() { return mpitype; }                            \
