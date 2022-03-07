@@ -3,13 +3,16 @@
 #include "impl/ArrayRef.hpp"
 #include "impl/DataTypeSelector.hpp"
 #include "impl/Utilities.hpp"
+#include <type_traits>
 
 namespace cxxmpi {
 
 using namespace portal::llvm;
 
 /* These 2 are just for completeness, consider using MPIContext instead */
-void init(int *argc, char ***argv) { detail::exitOnError(MPI_Init(argc, argv)); }
+void init(int *argc, char ***argv) {
+  detail::exitOnError(MPI_Init(argc, argv));
+}
 void finalize() { detail::exitOnError(MPI_Finalize()); }
 
 struct MPIContext {
@@ -48,22 +51,30 @@ double wtick() { return MPI_Wtick(); }
 template <class T, class TypeSelector = DataTypeSelector<T>>
 void send(ArrayRef<T> data, int dst, int tag = 0,
           MPI_Comm comm = MPI_COMM_WORLD) {
-  detail::exitOnError(MPI_Send(data.data(), data.size(), TypeSelector::value(), dst, tag, comm));
+  detail::exitOnError(MPI_Send(data.data(), data.size(), TypeSelector::value(),
+                               dst, tag, comm));
 }
 
 template <class T, class TypeSelector = DataTypeSelector<T>>
-void send(T &&data, int dst, int tag = 0, MPI_Comm comm = MPI_COMM_WORLD) {
-  return send<T, TypeSelector>(makeArrayRef(data), dst, tag, comm);
+void send(const T &data, int dst, int tag = 0, MPI_Comm comm = MPI_COMM_WORLD) {
+  detail::exitOnError(
+      MPI_Send(&data, 1, TypeSelector::value(), dst, tag, comm));
 }
 
 template <class T, class TypeSelector = DataTypeSelector<T>>
-void recv(MutableArrayRef<T> data, int src, int tag = MPI_ANY_TAG, MPI_Comm comm = MPI_COMM_WORLD, MPI_Status *status = MPI_STATUS_IGNORE) {
-  detail::exitOnError(MPI_Recv(data.data(), data.size(), TypeSelector::value(), src, tag, comm, status));
+void recv(MutableArrayRef<T> data, int src, int tag = MPI_ANY_TAG,
+          MPI_Comm comm = MPI_COMM_WORLD,
+          MPI_Status *status = MPI_STATUS_IGNORE) {
+  detail::exitOnError(MPI_Recv(data.data(), data.size(), TypeSelector::value(),
+                               src, tag, comm, status));
 }
 
 template <class T, class TypeSelector = DataTypeSelector<T>>
-void recv(T &data, int src, int tag = MPI_ANY_TAG, MPI_Status *status = MPI_STATUS_IGNORE) {
-  recv<T, TypeSelector>(makeMutableArrayRef<T>(data), src, tag, status);
+void recv(T &data, int src, int tag = MPI_ANY_TAG,
+          MPI_Comm comm = MPI_COMM_WORLD,
+          MPI_Status *status = MPI_STATUS_IGNORE) {
+  detail::exitOnError(
+      MPI_Recv(&data, 1, TypeSelector::value(), src, tag, comm, status));
 }
 
 class Timer {
