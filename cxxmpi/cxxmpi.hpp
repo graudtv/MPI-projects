@@ -62,7 +62,7 @@ void send(const T &data, int dst, int tag = 0, MPI_Comm comm = MPI_COMM_WORLD) {
 }
 
 template <class T, class TypeSelector = DataTypeSelector<T>>
-void recv(MutableArrayRef<T> data, int src, int tag = MPI_ANY_TAG,
+void recv(MutableArrayRef<T> data, int src = MPI_ANY_SOURCE, int tag = MPI_ANY_TAG,
           MPI_Comm comm = MPI_COMM_WORLD,
           MPI_Status *status = MPI_STATUS_IGNORE) {
   detail::exitOnError(MPI_Recv(data.data(), data.size(), TypeSelector::value(),
@@ -70,7 +70,7 @@ void recv(MutableArrayRef<T> data, int src, int tag = MPI_ANY_TAG,
 }
 
 template <class T, class TypeSelector = DataTypeSelector<T>>
-void recv(T &data, int src, int tag = MPI_ANY_TAG,
+void recv(T &data, int src = MPI_ANY_SOURCE, int tag = MPI_ANY_TAG,
           MPI_Comm comm = MPI_COMM_WORLD,
           MPI_Status *status = MPI_STATUS_IGNORE) {
   detail::exitOnError(

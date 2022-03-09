@@ -11,8 +11,8 @@ template <class T> struct DataTypeSelector {};
  * implementations they are defined as '#define MPI_CHAR ((void *) smth)'
  * C++ forbids usage of such casts in constexpr contexts, so the following
  * doesn't work:
- *   template <> struct DataTypeSelector<char> {
- *     static constexpr int value = MPI_CHAR;
+ *   template <> struct DataTypeSelector<signed char> {
+ *     static constexpr MPI_Datatype value = MPI_CHAR;
  *   }
  * Thus value is defined as a function
  */
@@ -21,7 +21,7 @@ template <class T> struct DataTypeSelector {};
     static MPI_Datatype value() { return mpitype; }                            \
   };
 
-DECLARE_MAPPING(char, MPI_CHAR)
+DECLARE_MAPPING(signed char, MPI_CHAR)
 DECLARE_MAPPING(unsigned char, MPI_UNSIGNED_CHAR)
 DECLARE_MAPPING(short, MPI_SHORT)
 DECLARE_MAPPING(unsigned short, MPI_UNSIGNED_SHORT)

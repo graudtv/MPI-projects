@@ -12,7 +12,7 @@ int handleManager(int N) {
 
   for (int I = 0; I < mpi::commSize() - 1; ++I) {
     double Res = 0;
-    mpi::recv(Res, I);
+    mpi::recv(Res);
     Summ += Res;
   }
   printf("I am manager, N = %d, ElapsedTime = %fs, Result = %lg\n", N,
@@ -46,6 +46,8 @@ void emitUsageError(const char *progname) {
 }
 
 int main(int argc, char *argv[]) {
+  mpi::MPIContext Ctx{&argc, &argv};
+
   const char *progname = argv[0];
   if (argc != 2)
     emitUsageError(progname);
@@ -55,8 +57,6 @@ int main(int argc, char *argv[]) {
     std::cerr << "Error: N must be a positive integer" << std::endl;
     emitUsageError(progname);
   }
-
-  mpi::MPIContext Ctx{&argc, &argv};
 
   if (mpi::commSize() == 1) {
     std::cerr
