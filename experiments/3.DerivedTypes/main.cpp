@@ -1,3 +1,5 @@
+/* Example of using custom (derived) types in MPI */
+
 #include "cxxmpi/cxxmpi.hpp"
 #include <iostream>
 #include <cassert>
