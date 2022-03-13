@@ -1,11 +1,12 @@
 #pragma once
 
 #include "../Shared/DataTypeSelector.hpp"
+#include "../Shared/misc.hpp"
 #include "../Support/Utilities.hpp"
 
 #include <array>
-#include <vector>
 #include <string>
+#include <vector>
 
 namespace cxxmpi {
 
@@ -18,6 +19,8 @@ Status probe(int src, int tag = MPI_ANY_TAG, MPI_Comm comm = MPI_COMM_WORLD) {
 /* Send scalar
  * ScalarT could be
  * - Elementary type (cxxmpi::isElementaryType<ScalarT>::value == true)
+ *   This includes int, float, double, char and most of other commonly-used
+ * types.
  * - struct/class, which was adapted with CXXMPI_ADAPT_STRUCT()
  * - Anything else, for which you can explicitly provide TypeSelector.
  *   Note, that providing such is quite tricky for arrays with unknown length,
@@ -61,9 +64,8 @@ void send(const ScalarT (&data)[N], int dst, int tag = 0,
 
 /* Send std::basic_string
  * This should be used with caution, cause char/wchar representation
- * is much more likely to differ on different platforms (comparing to other
- * types)
- * Note. Impl relies on that basic_string stores data contigiously,
+ * is much more likely to differ on different platforms (in comparison with
+ * other types) Note. Impl relies on that basic_string stores data contigiously,
  * which must be true since C++11
  */
 template <class CharT, class TypeSelector = DataTypeSelector<CharT>,
@@ -98,8 +100,8 @@ TypedStatus recvIntoExpandableContainer(Container &data, int src, int tag,
   data.resize(data.size() + msg_sz);
   /* receive data */
   MPI_Datatype type = TypeSelector::value();
-  detail::exitOnError(MPI_Recv(&data[0] + initial_sz, msg_sz, type, src, tag,
-                               comm, nullptr));
+  detail::exitOnError(
+      MPI_Recv(&data[0] + initial_sz, msg_sz, type, src, tag, comm, nullptr));
   return TypedStatus{status.getRaw(), type};
 }
 

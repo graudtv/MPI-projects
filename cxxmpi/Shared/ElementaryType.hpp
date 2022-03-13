@@ -10,7 +10,7 @@ namespace cxxmpi {
 
 /* ElementaryType defines a mapping from C++ types
  * to predefined MPI types (MPI_CHAR, MPI_INT, etc) */
-template <class T> struct ElementaryType {};
+template <class T> struct ElementaryType;
 
 /* Implementation note.
  * Though MPI_CHAR and so on are compile time constants, in some
