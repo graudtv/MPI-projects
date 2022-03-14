@@ -3,6 +3,7 @@
 #include "../Shared/DataTypeSelector.hpp"
 #include "../Shared/misc.hpp"
 #include "../Support/Utilities.hpp"
+#include "../Util/WorkSplitter.hpp"
 #include <cassert>
 
 namespace cxxmpi {
@@ -18,9 +19,9 @@ void bcast(ScalarT &data, int root, MPI_Comm comm = MPI_COMM_WORLD) {
 }
 
 /* If current process was the root in cxxmpi::gather(), GatherResult
- * contains the gather data and isValid() == true.
- * Otherwise, i.e. for all other processes except the one, it
- * contains empty vector and isValid() == false
+ * contains the gathered data and isValid() == true.
+ * Otherwise, i.e. for all other processes, it contains empty vector
+ * and isValid() == false
  *
  * It enables the following syntax:
  *
@@ -85,6 +86,35 @@ GatherResult<ScalarT> gather(ScalarT &value_to_send, int root = 0,
       MPI_Gather(&value_to_send, 1, type, &result[0], 1, type, root, comm));
   return is_root ? GatherResult<ScalarT>{std::move(result)}
                  : GatherResult<ScalarT>{};
+}
+
+/* Scatters the data as much fairly as possible, i.e. all processes will
+ * get approximatelly the same amount of data
+ * data argument is taken into account only for process with rank == root.
+ * For all other processes it must be empty due to debug simplification */
+template <class ScalarT, class TypeSelector = DataTypeSelector<ScalarT>>
+std::vector<ScalarT> scatterFair(std::vector<ScalarT> &data, size_t data_sz,
+                                 int root, MPI_Comm comm = MPI_COMM_WORLD) {
+  // TODO: optimize a case when data can be scattered evenly,
+  // i.e. plain MPI_Scatter can be used (data.size() % comm_sz == 0)
+  auto rank = commRank(comm);
+  auto comm_sz = commSize(comm);
+  if (rank == root) {
+    assert(data.size() == data_sz &&
+           "passed data_sz value must match the size of the passed vector");
+  } else {
+    assert(data.size() == 0 && "data must be empty for non-root procesees");
+  }
+
+  auto splitter = util::WorkSplitterLinear{static_cast<int>(data_sz), comm_sz};
+  auto sizes = splitter.getSizes();
+  auto displs = splitter.getDisplacements();
+  auto type = TypeSelector::value();
+  std::vector<ScalarT> result(sizes[rank]);
+
+  detail::exitOnError(MPI_Scatterv(&data[0], &sizes[0], &displs[0], type,
+                                   &result[0], sizes[rank], type, root, comm));
+  return result;
 }
 
 } // namespace cxxmpi

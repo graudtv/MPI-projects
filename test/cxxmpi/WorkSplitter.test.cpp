@@ -1,7 +1,7 @@
 #include <catch2/catch_all.hpp>
-#include "../Algorithm.hpp"
+#include "cxxmpi/cxxmpi.hpp"
 
-TEST_CASE("WorkSplitterLinear::getRange()", "[Algorithm]") {
+TEST_CASE("WorkSplitterLinear::getRange()", "[Util]") {
   util::WorkSplitterLinear S{11, 4};
   CHECK(S.getRange(0).FirstIdx == 0);
   CHECK(S.getRange(0).LastIdx == 3);
@@ -13,7 +13,7 @@ TEST_CASE("WorkSplitterLinear::getRange()", "[Algorithm]") {
   CHECK(S.getRange(3).LastIdx == 11);
 }
 
-TEST_CASE("WorkSplitterLinear::getSizes()", "[Algorithm]") {
+TEST_CASE("WorkSplitterLinear::getSizes()", "[Util]") {
   util::WorkSplitterLinear S{11, 4};
   auto Sizes = S.getSizes();
   CHECK(Sizes.size() == 4);
@@ -21,7 +21,7 @@ TEST_CASE("WorkSplitterLinear::getSizes()", "[Algorithm]") {
   CHECK(std::equal(Sizes.begin(), Sizes.end(), ExpectedSizes));
 }
 
-TEST_CASE("WorkSplitterLinear::getDisplacements()", "[Algorithm]") {
+TEST_CASE("WorkSplitterLinear::getDisplacements()", "[Util]") {
   util::WorkSplitterLinear S{11, 4};
   auto Displs = S.getDisplacements();
   CHECK(Displs.size() == 4);
