@@ -3,6 +3,7 @@
 #pragma once
 
 #include "DataTypeSelector.hpp"
+#include <iostream>
 
 namespace cxxmpi {
 
@@ -94,9 +95,18 @@ class Timer {
 public:
   Timer() : InitialTime(wtime()) {}
   double getElapsedTimeInSeconds() const { return wtime() - InitialTime; }
+  void reset() { InitialTime = wtime(); }
 
 private:
   double InitialTime;
 };
+
+/* Small ostream manip for convenience 
+ * Example:
+ * std::cout << whoami << ": Hello, world!" << std::endl;
+ */
+std::ostream &whoami(std::ostream &Os) {
+  return Os << '[' << commRank() + 1 << '/' << commSize() << "]";
+}
 
 } // namespace cxxmpi

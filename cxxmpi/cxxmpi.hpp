@@ -11,3 +11,4 @@
 #include <mpi.h>
 #include "Shared/misc.hpp"
 #include "P2P/BlockingMessages.hpp"
+#include "Collective/CollectiveMessages.hpp"
