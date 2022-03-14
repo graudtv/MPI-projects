@@ -10,7 +10,7 @@ add_executable(unit-tests
 )
 
 target_include_directories(unit-tests PRIVATE
-  ..
+  ../..
   ${MPI_CXX_INCLUDE_DIRS}
 )
 

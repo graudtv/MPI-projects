@@ -1,4 +1,3 @@
-#include "Support/Algorithm.hpp"
 #include "Support/OstreamHelpers.hpp"
 #include "cxxmpi/cxxmpi.hpp"
 #include <numeric>

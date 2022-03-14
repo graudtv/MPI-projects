@@ -1,4 +1,3 @@
-#include "Support/Algorithm.hpp"
 #include "Support/Parsing.hpp"
 #include "cxxmpi/cxxmpi.hpp"
 #include <iomanip>
