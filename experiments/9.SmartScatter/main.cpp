@@ -4,8 +4,8 @@
 
 namespace mpi = cxxmpi;
 
-template <class Printable> auto printvec(const Printable &P) {
-  return util::wrapSquareBrackets(util::join(P, ", "));
+template <class Container> auto printvec(const Container &C) {
+  return util::wrapSquareBrackets(util::join(C, ", "));
 }
 
 constexpr size_t ArraySz = 40;
