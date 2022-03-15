@@ -68,7 +68,7 @@ Datatype createContiguousType(Datatype old_type, size_t count) {
 }
 
 template <class BuiltinT> Datatype createContiguousType(size_t count) {
-  return createContiguosType(getBuiltinType<BuiltinT>(), count);
+  return createContiguousType(getBuiltinType<BuiltinT>(), count);
 }
 
 } // namespace cxxmpi

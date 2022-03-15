@@ -76,9 +76,15 @@ void send(const std::basic_string<CharT, Traits, Allocator> &s, int dst,
       MPI_Send(s.data(), s.size(), TypeSelector::getHandle(), dst, tag, comm));
 }
 
+/* Send single data element with user-specified data type */
+inline void send(const void *data, Datatype type, int dst, int tag = 0,
+                 MPI_Comm comm = MPI_COMM_WORLD) {
+  detail::exitOnError(MPI_Send(data, 1, type.getHandle(), dst, tag, comm));
+}
+
 /* receive scalar */
-template <class T, class TypeSelector = DatatypeSelector<T>>
-void recv(T &data, int src = MPI_ANY_SOURCE, int tag = MPI_ANY_TAG,
+template <class ScalarT, class TypeSelector = DatatypeSelector<ScalarT>>
+void recv(ScalarT &data, int src = MPI_ANY_SOURCE, int tag = MPI_ANY_TAG,
           MPI_Comm comm = MPI_COMM_WORLD,
           MPI_Status *status = MPI_STATUS_IGNORE) {
   detail::exitOnError(
@@ -129,6 +135,13 @@ TypedStatus recv(std::basic_string<CharT, Traits, Allocator> &data,
                  MPI_Comm comm = MPI_COMM_WORLD) {
   return detail::recvIntoExpandableContainer<TypeSelector>(data, src, tag,
                                                            comm);
+}
+
+/* receive single */
+inline void recv(void *data, Datatype type, int src = MPI_ANY_SOURCE,
+                 int tag = MPI_ANY_TAG, MPI_Comm comm = MPI_COMM_WORLD,
+                 MPI_Status *status = MPI_STATUS_IGNORE) {
+  detail::exitOnError(MPI_Recv(data, 1, type.getHandle(), src, tag, comm, status));
 }
 
 } // namespace cxxmpi
