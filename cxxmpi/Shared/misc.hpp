@@ -2,7 +2,8 @@
 
 #pragma once
 
-#include "DataTypeSelector.hpp"
+#include "Datatype.hpp"
+#include "DatatypeSelector.hpp"
 #include <iostream>
 
 namespace cxxmpi {
@@ -65,9 +66,9 @@ public:
 
   /* If you specify the wrong type you will probably get smth wrong.
    * If possible, use TypedStatus::getCount() */
-  template <class ScalarT, class TypeSelector = DataTypeSelector<ScalarT>>
+  template <class ScalarT, class TypeSelector = DatatypeSelector<ScalarT>>
   size_t getCountAs() const {
-    return ::cxxmpi::getCount(status, TypeSelector::value());
+    return ::cxxmpi::getCount(status, TypeSelector::getHandle());
   }
 
   MPI_Status getRaw() const { return status; }
@@ -85,7 +86,7 @@ public:
       : Status(std::move(s)), datatype(t) {}
 
   size_t getCount() const { return ::cxxmpi::getCount(status, datatype); }
-  MPI_Datatype type() const { return datatype; }
+  Datatype type() const { return Datatype{datatype}; }
 
 private:
   MPI_Datatype datatype;

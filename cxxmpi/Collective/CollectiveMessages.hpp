@@ -1,9 +1,8 @@
 #pragma once
 
-#include "../Shared/DataTypeSelector.hpp"
 #include "../Shared/misc.hpp"
-#include "../Support/Utilities.hpp"
 #include "../Util/WorkSplitter.hpp"
+
 #include <cassert>
 
 namespace cxxmpi {
@@ -13,9 +12,9 @@ void barrier(MPI_Comm comm = MPI_COMM_WORLD) {
 }
 
 /* bcast scalar */
-template <class ScalarT, class TypeSelector = DataTypeSelector<ScalarT>>
+template <class ScalarT, class TypeSelector = DatatypeSelector<ScalarT>>
 void bcast(ScalarT &data, int root, MPI_Comm comm = MPI_COMM_WORLD) {
-  detail::exitOnError(MPI_Bcast(&data, 1, TypeSelector::value(), root, comm));
+  detail::exitOnError(MPI_Bcast(&data, 1, TypeSelector::getHandle(), root, comm));
 }
 
 /* If current process was the root in cxxmpi::gather(), GatherResult
@@ -71,11 +70,11 @@ private:
 
 /* Gather scalar
  * See description of GatherResult above */
-template <class ScalarT, class TypeSelector = DataTypeSelector<ScalarT>>
+template <class ScalarT, class TypeSelector = DatatypeSelector<ScalarT>>
 GatherResult<ScalarT> gather(ScalarT &value_to_send, int root = 0,
                              MPI_Comm comm = MPI_COMM_WORLD) {
   std::vector<ScalarT> result;
-  auto type = TypeSelector::value();
+  auto type = TypeSelector::getHandle();
   bool is_root = (commRank(comm) == root);
 
   /* allocate space on the root */
@@ -92,7 +91,7 @@ GatherResult<ScalarT> gather(ScalarT &value_to_send, int root = 0,
  * get approximatelly the same amount of data
  * data argument is taken into account only for process with rank == root.
  * For all other processes it must be empty due to debug simplification */
-template <class ScalarT, class TypeSelector = DataTypeSelector<ScalarT>>
+template <class ScalarT, class TypeSelector = DatatypeSelector<ScalarT>>
 std::vector<ScalarT> scatterFair(std::vector<ScalarT> &data, size_t data_sz,
                                  int root, MPI_Comm comm = MPI_COMM_WORLD) {
   // TODO: optimize a case when data can be scattered evenly,
@@ -109,7 +108,7 @@ std::vector<ScalarT> scatterFair(std::vector<ScalarT> &data, size_t data_sz,
   auto splitter = util::WorkSplitterLinear{static_cast<int>(data_sz), comm_sz};
   auto sizes = splitter.getSizes();
   auto displs = splitter.getDisplacements();
-  auto type = TypeSelector::value();
+  auto type = TypeSelector::getHandle();
   std::vector<ScalarT> result(sizes[rank]);
 
   detail::exitOnError(MPI_Scatterv(&data[0], &sizes[0], &displs[0], type,
