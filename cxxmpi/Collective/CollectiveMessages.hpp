@@ -73,13 +73,12 @@ private:
   }
 };
 
-template <class T> using ScalarResult = CommunicationResult<T>;
-template <class T> using VectorResult = CommunicationResult<std::vector<T>>;
+template <class T> using GatherResult = CommunicationResult<std::vector<T>>;
 
 /* Gather scalar
  * See description of CommunicationResult above */
 template <class ScalarT, class TypeSelector = DatatypeSelector<ScalarT>>
-VectorResult<ScalarT> gather(ScalarT &value_to_send, int root = 0,
+GatherResult<ScalarT> gather(const ScalarT &value_to_send, int root = 0,
                              MPI_Comm comm = MPI_COMM_WORLD) {
   std::vector<ScalarT> result;
   auto type = TypeSelector::getHandle();
@@ -90,9 +89,9 @@ VectorResult<ScalarT> gather(ScalarT &value_to_send, int root = 0,
     result.resize(commSize(comm));
 
   detail::exitOnError(
-      MPI_Gather(&value_to_send, 1, type, &result[0], 1, type, root, comm));
-  return is_root ? VectorResult<ScalarT>{std::move(result)}
-                 : VectorResult<ScalarT>{};
+      MPI_Gather(&value_to_send, 1, type, result.data(), 1, type, root, comm));
+  return is_root ? GatherResult<ScalarT>{std::move(result)}
+                 : GatherResult<ScalarT>{};
 }
 
 /* Scatters the data as much fairly as possible, i.e. all processes will
@@ -119,8 +118,8 @@ std::vector<ScalarT> scatterFair(std::vector<ScalarT> &data, size_t data_sz,
   auto type = TypeSelector::getHandle();
   std::vector<ScalarT> result(sizes[rank]);
 
-  detail::exitOnError(MPI_Scatterv(&data[0], &sizes[0], &displs[0], type,
-                                   &result[0], sizes[rank], type, root, comm));
+  detail::exitOnError(MPI_Scatterv(data.data(), sizes.data(), displs.data(), type,
+                                   result.data(), sizes[rank], type, root, comm));
   return result;
 }
 

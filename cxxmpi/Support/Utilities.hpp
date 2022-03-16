@@ -11,6 +11,15 @@ void exitOnError(int RetCode) {
     exit(EXIT_FAILURE);
 }
 
+struct NonCopyableAndMovable {
+  NonCopyableAndMovable() = default;
+  ~NonCopyableAndMovable() = default;
+  NonCopyableAndMovable(const NonCopyableAndMovable &other) = delete;
+  NonCopyableAndMovable(NonCopyableAndMovable &&other) = delete;
+  NonCopyableAndMovable &operator =(const NonCopyableAndMovable &other) = delete;
+  NonCopyableAndMovable &operator =(NonCopyableAndMovable &&other) = delete;
+};
+
 /* I try to stick to C++11 because I have to work with old machine.
  * There is some handy stuff from further standards which is easy
  * to implement */

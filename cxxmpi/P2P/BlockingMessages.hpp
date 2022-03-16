@@ -106,8 +106,12 @@ TypedStatus recvIntoExpandableContainer(Container &data, int src, int tag,
   data.resize(data.size() + msg_sz);
   /* receive data */
   MPI_Datatype type = TypeSelector::getHandle();
+  /* note that we must use source and tag from Status. It is necessary
+   * to handle a case when source == MPI_ANY_SOURCE and/or tag == MPI_ANY_TAG,
+   * because we may accidentally receive the wrong message (which
+   * probably requires other buffer size) */
   detail::exitOnError(
-      MPI_Recv(&data[0] + initial_sz, msg_sz, type, src, tag, comm, nullptr));
+      MPI_Recv(&data[0] + initial_sz, msg_sz, type, status.source(), status.tag(), comm, nullptr));
   return TypedStatus{status.getRaw(), type};
 }
 

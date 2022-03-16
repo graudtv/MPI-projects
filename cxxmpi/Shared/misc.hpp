@@ -110,4 +110,10 @@ std::ostream &whoami(std::ostream &Os) {
   return Os << '[' << commRank() + 1 << '/' << commSize() << "]";
 }
 
+MPI_Aint getAddress(const void *location) {
+  MPI_Aint res;
+  detail::exitOnError(MPI_Get_address(location, &res));
+  return res;
+}
+
 } // namespace cxxmpi

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Support/ArrayRef.hpp"
 #include "BuiltinTypeTraits.hpp"
 #include <cassert>
 
@@ -41,15 +42,26 @@ private:
 };
 
 /* RAII wrapper for Datatype::commit() and Datatype::free() */
-class TypeCommitGuard {
+class TypeCommitGuard : public detail::NonCopyableAndMovable {
 public:
-  TypeCommitGuard(Datatype t) : type(t) { type.commit(); }
+  explicit TypeCommitGuard(Datatype t) : type(t) { type.commit(); }
   ~TypeCommitGuard() { type.free(); }
 
-  TypeCommitGuard(const TypeCommitGuard &other) = delete;
-  TypeCommitGuard(TypeCommitGuard &&other) = delete;
-  TypeCommitGuard &operator=(const TypeCommitGuard &other) = delete;
-  TypeCommitGuard &operator=(TypeCommitGuard &&other) = delete;
+private:
+  Datatype type;
+};
+
+/* Commits only if type is not null */
+class TypeCommitIfNotNullGuard : public detail::NonCopyableAndMovable {
+public:
+  explicit TypeCommitIfNotNullGuard(Datatype t) : type(t) {
+    if (!type.isNull())
+      type.commit();
+  }
+  ~TypeCommitIfNotNullGuard() {
+    if (!type.isNull())
+      type.free();
+  }
 
 private:
   Datatype type;
@@ -69,6 +81,17 @@ Datatype createContiguousType(Datatype old_type, size_t count) {
 
 template <class BuiltinT> Datatype createContiguousType(size_t count) {
   return createContiguousType(getBuiltinType<BuiltinT>(), count);
+}
+
+Datatype createIndexedTypeH(Datatype old_type, ArrayRef<int> blocklengths,
+                            ArrayRef<MPI_Aint> displacements) {
+  assert(blocklengths.size() == displacements.size() &&
+         "blocklengths and displacements must have the same size");
+  MPI_Datatype new_type;
+  detail::exitOnError(MPI_Type_create_hindexed(
+      blocklengths.size(), blocklengths.data(), displacements.data(),
+      old_type.getHandle(), &new_type));
+  return Datatype{new_type};
 }
 
 } // namespace cxxmpi
