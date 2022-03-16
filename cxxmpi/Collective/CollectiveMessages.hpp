@@ -17,10 +17,15 @@ void bcast(ScalarT &data, int root, MPI_Comm comm = MPI_COMM_WORLD) {
   detail::exitOnError(MPI_Bcast(&data, 1, TypeSelector::getHandle(), root, comm));
 }
 
-/* If current process was the root in cxxmpi::gather(), GatherResult
- * contains the gathered data and isValid() == true.
- * Otherwise, i.e. for all other processes, it contains empty vector
- * and isValid() == false
+/* CommunicationResult is used in different collective communication
+ * routines to provide convenient access to the communication results
+ *
+ * For processes which should receive some result, for example root
+ * proccess in cxxmpi::gather(), CommunicationResult contains the
+ * result data itself and isValid() == true
+ * For processes which are not expected to receive any result, for
+ * example all processes except root in cxxmpi::gather(), data is
+ * empty and isValid() == false
  *
  * It enables the following syntax:
  *
@@ -31,36 +36,36 @@ void bcast(ScalarT &data, int root, MPI_Comm comm = MPI_COMM_WORLD) {
  *   ... // do smth with data
  * }
  */
-template <class T> class GatherResult {
+template <class DataT> class CommunicationResult {
 public:
   /* Check if current process was the root in gather */
   bool isValid() const { return IsValid; }
   operator bool() const { return isValid(); }
 
-  std::vector<T> takeData() {
+  DataT takeData() {
     assertValid();
     return std::move(Data);
   }
-  std::vector<T> &data() {
+  DataT &data() {
     assertValid();
     return Data;
   }
-  const std::vector<T> &data() const {
+  const DataT &data() const {
     assertValid();
     return Data;
   }
 
-  GatherResult() : IsValid(false) {}
-  GatherResult(std::vector<T> Vec) : Data(std::move(Vec)), IsValid(true) {}
+  CommunicationResult() : IsValid(false) {}
+  CommunicationResult(DataT D) : Data(std::move(D)), IsValid(true) {}
 
-  GatherResult(const GatherResult &Other) = delete;
-  GatherResult &operator=(const GatherResult &Other) = delete;
+  CommunicationResult(const CommunicationResult &Other) = delete;
+  CommunicationResult &operator=(const CommunicationResult &Other) = delete;
 
-  GatherResult(GatherResult &&Other) = default;
-  GatherResult &operator=(GatherResult &&Other) = default;
+  CommunicationResult(CommunicationResult &&Other) = default;
+  CommunicationResult &operator=(CommunicationResult &&Other) = default;
 
 private:
-  std::vector<T> Data;
+  DataT Data;
   bool IsValid;
 
   void assertValid() {
@@ -68,10 +73,13 @@ private:
   }
 };
 
+template <class T> using ScalarResult = CommunicationResult<T>;
+template <class T> using VectorResult = CommunicationResult<std::vector<T>>;
+
 /* Gather scalar
- * See description of GatherResult above */
+ * See description of CommunicationResult above */
 template <class ScalarT, class TypeSelector = DatatypeSelector<ScalarT>>
-GatherResult<ScalarT> gather(ScalarT &value_to_send, int root = 0,
+VectorResult<ScalarT> gather(ScalarT &value_to_send, int root = 0,
                              MPI_Comm comm = MPI_COMM_WORLD) {
   std::vector<ScalarT> result;
   auto type = TypeSelector::getHandle();
@@ -83,8 +91,8 @@ GatherResult<ScalarT> gather(ScalarT &value_to_send, int root = 0,
 
   detail::exitOnError(
       MPI_Gather(&value_to_send, 1, type, &result[0], 1, type, root, comm));
-  return is_root ? GatherResult<ScalarT>{std::move(result)}
-                 : GatherResult<ScalarT>{};
+  return is_root ? VectorResult<ScalarT>{std::move(result)}
+                 : VectorResult<ScalarT>{};
 }
 
 /* Scatters the data as much fairly as possible, i.e. all processes will
