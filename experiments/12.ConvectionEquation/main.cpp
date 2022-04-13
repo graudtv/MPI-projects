@@ -1,10 +1,10 @@
 #include "Support/Evaluator.hpp"
 #include "cxxmpi/cxxmpi.hpp"
 #include "external/popl/include/popl.hpp"
-#include <unistd.h>
+#include <cmath>
 #include <fstream>
 #include <iostream>
-#include <cmath>
+#include <unistd.h>
 
 namespace mpi = cxxmpi;
 
@@ -53,10 +53,9 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
    *                  |
    *  Left <-----> Central, F
    */
-  auto leftAngle =
-      [h, tau](double Left, double Central, double F) {
-        return (F - (Central - Left) / h) * tau + Central;
-      };
+  auto leftAngle = [h, tau](double Left, double Central, double F) {
+    return (F - (Central - Left) / h) * tau + Central;
+  };
 
   /*
    *               Result
@@ -69,10 +68,9 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
    *                  v
    *               Bottom
    */
-  auto chest =
-      [h, tau](double Left, double Right, double Bottom, double F) {
-        return (2 * F - (Right - Left) / h) * tau + Bottom;
-      };
+  auto chest = [h, tau](double Left, double Right, double Bottom, double F) {
+    return (2 * F - (Right - Left) / h) * tau + Bottom;
+  };
 
   /*               Result
    *                  ^
@@ -81,10 +79,9 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
    *  Left <--------------------> Rigth
    *                  F
    */
-  auto central3pt =
-      [h, tau](double Left, double Right, double F) {
-        return (F - (Right - Left) / (2 * h)) * tau + 0.5 * (Right - Left);
-      };
+  auto central3pt = [h, tau](double Left, double Right, double F) {
+    return (F - (Right - Left) / (2 * h)) * tau + 0.5 * (Right - Left);
+  };
 
   /* 1. Split work
    * Each process handles some segment of X axis */
@@ -148,25 +145,24 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
    * If there is no left neighbor, fetches data from Psi instead
    * If there is no right neighbor, fetches data with leftAngle scheme instead
    * A trick is done to avoid deadlock */
-  auto doMsgExchange =
-      [&](size_t CurRow) {
-        if (Rank % 2 == 0) {
-          mpi::send(Cur.back(), rightRank());
-          mpi::send(Cur.front(), leftRank());
-          mpi::recv(LeftNeighbor, leftRank());
-          mpi::recv(RightNeighbor, rightRank());
-        } else {
-          mpi::recv(LeftNeighbor, leftRank());
-          mpi::recv(RightNeighbor, rightRank());
-          mpi::send(Cur.back(), rightRank());
-          mpi::send(Cur.front(), leftRank());
-        }
-        if (!LeftNeighborExists)
-          LeftNeighbor = NormPsi(CurRow);
-        if (!RightNeighborExists)
-          RightNeighbor =
-              leftAngle(penultimate(Prev), Prev.back(), NormF(CurRow - 1, M));
-      };
+  auto doMsgExchange = [&](size_t CurRow) {
+    if (Rank % 2 == 0) {
+      mpi::send(Cur.back(), rightRank());
+      mpi::send(Cur.front(), leftRank());
+      mpi::recv(LeftNeighbor, leftRank());
+      mpi::recv(RightNeighbor, rightRank());
+    } else {
+      mpi::recv(LeftNeighbor, leftRank());
+      mpi::recv(RightNeighbor, rightRank());
+      mpi::send(Cur.back(), rightRank());
+      mpi::send(Cur.front(), leftRank());
+    }
+    if (!LeftNeighborExists)
+      LeftNeighbor = NormPsi(CurRow);
+    if (!RightNeighborExists)
+      RightNeighbor =
+          leftAngle(penultimate(Prev), Prev.back(), NormF(CurRow - 1, M));
+  };
 
   /* 5. Exchange corner elements of the 1-st row between segments */
   doMsgExchange(1);
@@ -196,7 +192,8 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
 /* Phi, PhiStr, Psi, PsiStr - out args */
 bool parseBoundaryConditions(std::istream &Is, util::Evaluator &Phi,
                              std::string &PhiStr, util::Evaluator &Psi,
-                             std::string &PsiStr, bool EnablePrompts = true) {
+                             std::string &PsiStr, util::Evaluator2D &F,
+                             std::string &FStr, bool EnablePrompts = true) {
   if (EnablePrompts) {
     std::cout << "Enter boundary conditions" << std::endl;
     std::cout << "phi(x) = u(0, x) = ";
@@ -215,6 +212,14 @@ bool parseBoundaryConditions(std::istream &Is, util::Evaluator &Phi,
     std::cerr << "Error: " << Psi.getErrorStr() << std::endl;
     return false;
   }
+
+  if (EnablePrompts)
+    std::cout << "f(t, x) = ";
+  std::getline(Is, FStr);
+  if (!F.parse(FStr, "t", "x")) {
+    std::cerr << "Error: " << F.getErrorStr() << std::endl;
+    return false;
+  }
   return true;
 }
 
@@ -229,17 +234,35 @@ void emitUsageError(const char *msg) {
 Short example:
   ./prog -X 1.0 -T 0.05 -M 400 -K 20
 
-Input data format:
+About:
+  This program solves convection equation:
+        du(t, x)/dt + du(t, x)/dx = f(t, x),      0 <= t <= T, 0 <= x <= X
+        u(0, x) = phi(x),                         0 <= x <= X
+        u(t, 0) = psi(t),                         0 <= t <= T
+
+  The program may be run both as a single process and in parallel
+
+  X, T are passed as command line options.
+  Functions phi(x), psi(t) and f(t, x) are specified in text format at runtime.
+  See Input Data Format section to understand how to specify them
+
+  Options M, K specify number of x and t axis divisions
+  Other options are optional
+
+Input Data Format:
   Input data is read from stdin or a file specified with -f option by
   a process with rank 0.
-  Input should contain 2 lines with expressions specifying boundary condition
-  functions phi(x) = u(0, x) and psi(t) = u(t, 0). Input is parsed with
-  libmatheval, see its documentation for valid expression formats.
+  Input should contain 3 lines. First two lines are expressions
+  specifying boundary condition functions phi(x) = u(0, x) and
+  psi(t) = u(t, 0). The last line specifies function f(t, x)
+  Input is parsed with libmatheval, see its documentation for valid
+  expression formats.
 
   Example:
   $ cat > input.txt << EOF
   > x
   > sin(t) + t ^ 2
+  > x + t + x * t
   > EOF
   $ ./prog -X 1.0 -T 0.05 -M 400 -K 20 --file input.txt
   $ cat input.txt | ./prog -X 1.0 -T 0.05 -M 400 -K 20
@@ -294,15 +317,24 @@ int main(int argc, char *argv[]) try {
     Is = &Ifs;
   }
 
-  std::string PhiStr, PsiStr;
+  std::string PhiStr, PsiStr, FStr;
   util::Evaluator Phi, Psi;
+  util::Evaluator2D F;
 
   if (mpi::commRank() == 0) {
     /* enabling user prompts if reading from terminal */
     bool EnablePrompts = (Is == &std::cin) && isatty(fileno(stdin));
     /* try parse Phi and Psi functions */
-    if (!parseBoundaryConditions(*Is, Phi, PhiStr, Psi, PsiStr, EnablePrompts))
+    if (!parseBoundaryConditions(*Is, Phi, PhiStr, Psi, PsiStr, F, FStr,
+                                 EnablePrompts))
       return EXIT_FAILURE;
+    constexpr double CmpPrec = 0.01;
+    if (abs(Phi(0) - Psi(0)) >= CmpPrec) {
+      std::cerr << "Error: phi(0) must be equal to psi(0), but they are "
+                   "significantly different: phi(0) = "
+                << Phi(0) << ", psi(0) = " << Psi(0) << std::endl;
+      return EXIT_FAILURE;
+    }
   }
   /* broadcast functions to everyone else
    * if there is only one process, no need to broadcast, the process is alone
@@ -310,10 +342,12 @@ int main(int argc, char *argv[]) try {
   if (mpi::commSize() > 1) {
     mpi::bcast(PhiStr, 0);
     mpi::bcast(PsiStr, 0);
+    mpi::bcast(FStr, 0);
     if (mpi::commRank() != 0 &&
-        !(Phi.parse(PhiStr, "x") && Psi.parse(PsiStr, "t"))) {
-      std::cerr << "fatal error: root was able to parse function expressions, "
-                   "but this process failed"
+        !(Phi.parse(PhiStr, "x") && Psi.parse(PsiStr, "t")) &&
+        F.parse(FStr, "t", "x")) {
+      std::cerr << "Fatal error: root was able to parse function expressions, "
+                   "but this process failed to"
                 << std::endl;
       return EXIT_FAILURE;
     }

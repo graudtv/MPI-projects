@@ -1,2 +1,3 @@
 x
 sin(t) + t ^ 2
+x + t + x * t
