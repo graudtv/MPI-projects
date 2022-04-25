@@ -3,6 +3,7 @@
 #include "external/popl/include/popl.hpp"
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <unistd.h>
 
@@ -182,10 +183,8 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
       doMsgExchange(Row);
   }
 
-  if (Verbose) {
+  if (Verbose)
     std::cout << mpi::whoami << ": complete!!!" << std::endl;
-    // std::cout << mpi::whoami << "data: " << util::join(Cur) << std::endl;
-  }
   return mpi::gatherv(Cur, 0);
 }
 
@@ -264,9 +263,9 @@ Input Data Format:
   > sin(t) + t ^ 2
   > x + t + x * t
   > EOF
-  $ ./prog -X 1.0 -T 0.05 -M 400 -K 20 --file input.txt
-  $ cat input.txt | ./prog -X 1.0 -T 0.05 -M 400 -K 20
-  $ cat input.txt | mpirun -n 4 ./prog -X 1.0 -T 0.05 -M 400 -K 20
+  $ ./prog -X 1.0 -T 0.05 -M 400 -K 20 --file input.txt --data
+  $ cat input.txt | ./prog -X 1.0 -T 0.05 -M 400 -K 20 --data
+  $ cat input.txt | mpirun -n 4 ./prog -X 1.0 -T 0.05 -M 400 -K 20 --data
 )" << std::endl;
   exit(EXIT_FAILURE);
 }
@@ -290,8 +289,9 @@ int main(int argc, char *argv[]) try {
   auto Filename = Op.add<Value<std::string>>(
       "f", "file", "use specified file instead of stdin");
 
+  auto DumpData = Op.add<Switch>("d", "data", "dump resulting array");
+  auto DumpTime = Op.add<Switch>("t", "time", "dump computation time");
   auto Verbose = Op.add<Switch>("v", "verbose", "emit debug information");
-  auto PrintTime = Op.add<Switch>("t", "time", "print computation time");
 
   Op.parse(argc, argv);
 
@@ -353,21 +353,14 @@ int main(int argc, char *argv[]) try {
     }
   }
 
-  /* time spent initialization */
-  double InitTime = InitTmr.getElapsedTimeInSeconds();
-
-  mpi::Timer ComputationTmr;
+  mpi::Timer Tmr;
   auto Res = compute(
       X->value(), T->value(), M->value(), K->value(), Phi, Psi,
       [](double, double) { return 0; }, Verbose->value());
-  if (PrintTime->value() && mpi::commRank() == 0) {
-    printf("Initialization time: %lg s\n"
-           "Computation time: %lg s\n",
-           InitTime, ComputationTmr.getElapsedTimeInSeconds());
-  }
-  if (Res) {
+  if (DumpData->value() && Res)
     std::cout << util::join(Res.data()) << std::endl;
-  }
+  if (DumpTime->value() && mpi::commRank() == 0)
+    std::cout << std::fixed << std::setprecision(2) << Tmr.getElapsedTimeInSeconds() << "s" << std::endl;
   return 0;
 } catch (popl::invalid_option &e) {
   emitUsageError(e.what());
