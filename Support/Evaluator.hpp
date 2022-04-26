@@ -1,10 +1,10 @@
 /* C++ wrapper for libmatheval */
 
 #include "OstreamHelpers.hpp"
+#include <array>
+#include <iostream>
 #include <matheval.h>
 #include <sstream>
-#include <iostream>
-#include <array>
 
 namespace util {
 
@@ -12,7 +12,7 @@ class EvaluatorBase {
 public:
   EvaluatorBase() = default;
   EvaluatorBase(const EvaluatorBase &Other) = delete;
-  EvaluatorBase &operator =(const EvaluatorBase &Other) = delete;
+  EvaluatorBase &operator=(const EvaluatorBase &Other) = delete;
   virtual ~EvaluatorBase() { releaseEvaluator(); }
 
   /* Check if Evaluator has successfully parsed function and
@@ -39,9 +39,7 @@ protected:
     }
   }
 
-  void clearErrors() {
-      Err.str("");
-  }
+  void clearErrors() { Err.str(""); }
 
   bool createEvaluator(const std::string &Expr) {
     releaseEvaluator(); // release previous state if already initialized
@@ -54,8 +52,7 @@ protected:
   }
 };
 
-template <size_t N>
-class EvaluatorND : public EvaluatorBase {
+template <size_t N> class EvaluatorND : public EvaluatorBase {
 public:
   /* Tries to parse an expression as a function of ExpectedParamNames
    * If error occures, false is returned and explanation can be obtained
@@ -65,8 +62,10 @@ public:
    * same name, behavior is undefined!
    */
   template <class... StringTs>
-  bool parse(const std::string &Expr, StringTs&&... ExpectedParamNames) {
-    static_assert(sizeof...(ExpectedParamNames) == N, "EvaluatorND::parse() was called with wrong number of arguments");
+  bool parse(const std::string &Expr, StringTs &&...ExpectedParamNames) {
+    static_assert(
+        sizeof...(ExpectedParamNames) == N,
+        "EvaluatorND::parse() was called with wrong number of arguments");
     if (!createEvaluator(Expr))
       return false;
     if (!parseImpl(std::array<std::string, N>{ExpectedParamNames...})) {
@@ -78,12 +77,15 @@ public:
 
   /* Evaluates expression */
   template <class... ConvertibleToDoubleTs>
-  double operator ()(ConvertibleToDoubleTs&&... Args) {
-    static_assert(sizeof...(Args) == N, "EvaluatorND::operator()() was called with wrong number of arguments");
+  double operator()(ConvertibleToDoubleTs &&...Args) const {
+    static_assert(
+        sizeof...(Args) == N,
+        "EvaluatorND::operator()() was called with wrong number of arguments");
     assert(isValid() && "Evaluator was not initialized");
 
     std::array<double, N> InputValues{static_cast<double>(Args)...};
-    return evaluator_evaluate(F, N, InputParamNames.data(), InputValues.data());
+    return evaluator_evaluate(F, N, const_cast<char **>(InputParamNames.data()),
+                              InputValues.data());
   }
 
 private:
@@ -98,14 +100,15 @@ private:
      * (for example f(x, y) = x is a valid 2D function)
      * But if parsed contains unexpected params, it's definitely
      * an error */
-    if (ActualParamCount > N){
+    if (ActualParamCount > N) {
       explainWhatWasExpected(ExpectedParamNames);
       Err << ", but parsed function seems to be a function of ";
       if (ActualParamCount == 1) {
         Err << "one variable " << ActualParamNames[0];
       } else {
         Err << ActualParamCount << " variables: "
-            << util::join(ActualParamNames, ActualParamNames + ActualParamCount, ", ");
+            << util::join(ActualParamNames, ActualParamNames + ActualParamCount,
+                          ", ");
       }
       return false;
     }
@@ -117,38 +120,42 @@ private:
      * will be later passed to evaluator_evaluate() */
     for (size_t I = 0; I < ActualParamCount; ++I) {
       char *ActualParamName = ActualParamNames[I];
-      auto It = std::find(ExpectedParamNames.begin(), ExpectedParamNames.end(), ActualParamName);
+      auto It = std::find(ExpectedParamNames.begin(), ExpectedParamNames.end(),
+                          ActualParamName);
       if (It == ExpectedParamNames.end()) {
         explainWhatWasExpected(ExpectedParamNames);
-        Err << ", but parsed function contains unknown variable " << ActualParamName;
+        Err << ", but parsed function contains unknown variable "
+            << ActualParamName;
         return false;
       }
       size_t Offset = std::distance(ExpectedParamNames.begin(), It);
-      assert(InputParamNames[Offset] == nullptr && "this is bug in lib matheval");
+      assert(InputParamNames[Offset] == nullptr &&
+             "this is bug in lib matheval");
       InputParamNames[Offset] = ActualParamName;
     }
     /* Now fill unused variables in InputParamNames with empty strings */
-    std::transform(InputParamNames.begin(), InputParamNames.end(), InputParamNames.begin(),
-      [](char *Str) { return Str ? Str : const_cast<char *>(""); }
-    );
+    std::transform(
+        InputParamNames.begin(), InputParamNames.end(), InputParamNames.begin(),
+        [](char *Str) { return Str ? Str : const_cast<char *>(""); });
     return true;
   }
 
-  void explainWhatWasExpected(const std::array<std::string, N> &ExpectedParamNames) {
+  void
+  explainWhatWasExpected(const std::array<std::string, N> &ExpectedParamNames) {
     Err << "expected ";
     if (N == 0) {
       Err << "constant expression";
     } else if (N == 1) {
       Err << "function of one variable " << ExpectedParamNames[0];
     } else {
-      Err << "function of " << N << " variables: " <<
-        util::join(ExpectedParamNames.begin(), ExpectedParamNames.end(), ", ");
+      Err << "function of " << N << " variables: "
+          << util::join(ExpectedParamNames.begin(), ExpectedParamNames.end(),
+                        ", ");
     }
   }
 };
 
-inline
-std::ostream &operator <<(std::ostream &Os, const EvaluatorBase &E) {
+inline std::ostream &operator<<(std::ostream &Os, const EvaluatorBase &E) {
   return Os << E.getTmpString();
 }
 
