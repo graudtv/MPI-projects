@@ -29,11 +29,9 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
   double h = X / M;   // coordinate step
   double tau = T / K; // time step
 
-  /* 0. Get normalized functions for convenience */
+  /* 0. Normalized functions for convenience */
   auto NormPhi = [&](int m) {
-    /* current algorithm uses (-1)-th and (M+1)-th elems
-     * it could be fixed, if necessary */
-    assert(m >= -1 && m <= M + 1 && "m out of bounds");
+    assert(m >= 0 && m <= M && "m out of bounds");
     return Phi(m * h);
   };
   auto NormPsi = [&](int k) {
@@ -46,7 +44,10 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
     return F(k * tau, m * h);
   };
 
-  /* 0.5. Other helper functions */
+  // std::cout << F(5, 3) << std::endl;
+  // std::cout << NormF(2, 1) << std::endl;
+
+  /* 0.5. Functions for different computation schemes */
   /*
    *               Result
    *                  ^
@@ -69,7 +70,7 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
    *                  v
    *               Bottom
    */
-  auto chest = [h, tau](double Left, double Right, double Bottom, double F) {
+  auto cross = [h, tau](double Left, double Right, double Bottom, double F) {
     return (2 * F - (Right - Left) / h) * tau + Bottom;
   };
 
@@ -81,7 +82,7 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
    *                  F
    */
   auto central3pt = [h, tau](double Left, double Right, double F) {
-    return (F - (Right - Left) / (2 * h)) * tau + 0.5 * (Right - Left);
+    return (F - (Right - Left) / (2 * h)) * tau + 0.5 * (Right + Left);
   };
 
   /* 1. Split work
@@ -94,97 +95,102 @@ mpi::GatherResult<double> compute(double X, double T, int M, int K, PhiTy &&Phi,
   assert(std::fabs(NormPhi(0) - NormPsi(0)) < 0.01 &&
          "NormalizedPhi and NormalizedPsi significantly diverge at 0 (but must "
          "be the same)");
-
-  /* 2. Init vectors */
-  std::vector<double> Prev(SegmentSz);
-  std::vector<double> Cur(SegmentSz);
-  std::vector<double> Next(SegmentSz);
-  /* elems that are fetched from the left and right neighbors */
-  double LeftNeighbor = 0;
-  double RightNeighbor = 0;
-
-  /* fetch left and right elems taking neighbors into account */
-  auto leftFrom = [&](const std::vector<double> &Vec, size_t I) {
-    return (I == 0) ? LeftNeighbor : Vec[I - 1];
-  };
-  auto rightFrom = [&](const std::vector<double> &Vec, size_t I) {
-    return (I == SegmentSz) ? RightNeighbor : Vec[I + 1];
-  };
+  bool LeftNeighborExists = (Rank != 0);
+  bool RightNeighborExists = (Rank != CommSz - 1);
 
   /* converts local index to global */
   auto globalX = [=](size_t I) { return Range.FirstIdx + I; };
 
+  /* 2. Prepare vectors */
+  std::vector<double> Prev(SegmentSz);
+  std::vector<double> Cur(SegmentSz);
+  std::vector<double> Next(SegmentSz);
+
   /* 3. Fill the 0-th row with phi(x) */
   for (size_t I = 0; I < SegmentSz; ++I)
     Prev[I] = NormPhi(globalX(I));
-  /* here we have out of bound access for processes with Rank == 0 and
-   * with Rank == CommSz - 1, but I don't think it is a big problem now */
-  LeftNeighbor = NormPhi(Range.FirstIdx - 1);
-  RightNeighbor = NormPhi(Range.LastIdx);
 
-  /* 4. Calculate the 1-st row with central 3-point scheme */
-  for (size_t I = 0; I < SegmentSz; ++I) {
-    Cur[I] =
-        central3pt(leftFrom(Prev, I), rightFrom(Prev, I), NormF(0, globalX(I)));
+  if (Verbose) {
+    std::cout << mpi::whoami << ": row[0] = " << util::join(Prev, ", ")
+              << std::endl;
   }
 
-  /* 4.5. MORE LAMBDAS !!! */
-  bool LeftNeighborExists = (Rank != 0);
-  bool RightNeighborExists = (Rank != CommSz - 1);
+  /* 4. Calculate the 1-st row with central 3-point scheme (where possible) */
+  constexpr int Row = 0; // the current row
+  for (size_t I = 1; I < SegmentSz - 1; ++I)
+    Cur[I] = central3pt(Prev[I - 1], Prev[I + 1], NormF(Row, globalX(I)));
+  Cur.front() = LeftNeighborExists ? central3pt(NormPhi(globalX(-1)), Prev[1],
+                                                NormF(Row, globalX(0)))
+                                   : Psi(Row + 1);
+  Cur.back() = RightNeighborExists
+                   ? central3pt(penultimate(Prev), NormPhi(globalX(SegmentSz)),
+                                NormF(Row, globalX(SegmentSz - 1)))
+                   : leftAngle(penultimate(Prev), Prev.back(),
+                               NormF(Row, globalX(SegmentSz - 1)));
 
-  /* we can send to rightRank() even if there is no right
-   * neighbor due to MPI_PROC_NULL feature */
-  auto rightRank = [=] {
-    return LeftNeighborExists ? (Rank - 1) : MPI_PROC_NULL;
-  };
-  auto leftRank = [=] {
-    return RightNeighborExists ? (Rank + 1) : MPI_PROC_NULL;
-  };
+  /* 5. Prepare to run cross scheme */
+  /* elems feteched from the left and right neighbors */
+  double LeftNeighbor = 0;
+  double RightNeighbor = 0;
+
+  /* using MPI_PROC_NULL feature */
+  auto RightRank = RightNeighborExists ? (Rank + 1) : MPI_PROC_NULL;
+  auto LeftRank = LeftNeighborExists ? (Rank - 1) : MPI_PROC_NULL;
 
   /* sends Cur.back() to the right neighbor, Cur.front() to the left neighbor
    * and fetch LeftNeighbor, RightNeighbor from the left and right neighbor
-   * If there is no left neighbor, fetches data from Psi instead
-   * If there is no right neighbor, fetches data with leftAngle scheme instead
    * A trick is done to avoid deadlock */
-  auto doMsgExchange = [&](size_t CurRow) {
+  auto doMsgExchange = [&]() {
     if (Rank % 2 == 0) {
-      mpi::send(Cur.back(), rightRank());
-      mpi::send(Cur.front(), leftRank());
-      mpi::recv(LeftNeighbor, leftRank());
-      mpi::recv(RightNeighbor, rightRank());
+      mpi::send(Cur.back(), RightRank);
+      mpi::send(Cur.front(), LeftRank);
+      mpi::recv(LeftNeighbor, LeftRank);
+      mpi::recv(RightNeighbor, RightRank);
     } else {
-      mpi::recv(LeftNeighbor, leftRank());
-      mpi::recv(RightNeighbor, rightRank());
-      mpi::send(Cur.back(), rightRank());
-      mpi::send(Cur.front(), leftRank());
+      mpi::recv(LeftNeighbor, LeftRank);
+      mpi::recv(RightNeighbor, RightRank);
+      mpi::send(Cur.back(), RightRank);
+      mpi::send(Cur.front(), LeftRank);
     }
-    if (!LeftNeighborExists)
-      LeftNeighbor = NormPsi(CurRow);
-    if (!RightNeighborExists)
-      RightNeighbor =
-          leftAngle(penultimate(Prev), Prev.back(), NormF(CurRow - 1, M));
   };
 
-  /* 5. Exchange corner elements of the 1-st row between segments */
-  doMsgExchange(1);
+  /* 6. Exchange corner elements of the 1-st row between segments */
+  doMsgExchange();
 
-  /* 6. Now we are ready to use the cross scheme
-   * Row here is the "current" row. We are fetching the "next" row,
+  /* 7. Now we are ready to use the cross scheme
+   * "Row" variable here is the "current" row. We are fetching the "next" row,
    * i.e. Row + 1 */
   for (int Row = 1; Row < K; ++Row) {
-    for (size_t I = 0; I < SegmentSz; ++I) {
-      Next[I] = chest(leftFrom(Cur, I), rightFrom(Cur, I), Prev[I],
-                      NormF(Row, globalX(I)));
+    if (Verbose) {
+      std::cout << mpi::whoami << ": row[" << Row
+                << "] = " << util::join(Cur, ", ") << std::endl;
     }
+
+    for (size_t I = 1; I < SegmentSz - 1; ++I)
+      Next[I] = cross(Cur[I - 1], Cur[I + 1], Prev[I], NormF(Row, globalX(I)));
+    Next.front() = LeftNeighborExists ? cross(LeftNeighbor, Cur[1], Prev[0],
+                                              NormF(Row, globalX(0)))
+                                      : Psi(Row + 1);
+    Next.back() = RightNeighborExists
+                      ? cross(penultimate(Cur), RightNeighbor, Prev.back(),
+                              NormF(Row, globalX(SegmentSz - 1)))
+                      : leftAngle(penultimate(Cur), Cur.back(),
+                                  NormF(Row, globalX(SegmentSz - 1)));
+
+    /* Circular shift of buffers */
     std::swap(Prev, Cur);
     std::swap(Cur, Next);
-    /* We don't need to exchange corners for the very last row */
+
+    /* Exchange neighbors (for every row except last one) */
     if (Row != K - 1)
-      doMsgExchange(Row);
+      doMsgExchange();
+    // if (Verbose) {
+    //   std::cout << mpi::whoami << ": at row = " << Row << ""
+    // }
   }
 
-  if (Verbose)
-    std::cout << mpi::whoami << ": complete!!!" << std::endl;
+  // if (Verbose)
+  //   std::cout << mpi::whoami << ": complete!!!" << std::endl;
   return mpi::gatherv(Cur, 0);
 }
 
@@ -336,6 +342,7 @@ int main(int argc, char *argv[]) try {
       return EXIT_FAILURE;
     }
   }
+
   /* broadcast functions to everyone else
    * if there is only one process, no need to broadcast, the process is alone
    * in the MPI world :(( */
@@ -344,8 +351,8 @@ int main(int argc, char *argv[]) try {
     mpi::bcast(PsiStr, 0);
     mpi::bcast(FStr, 0);
     if (mpi::commRank() != 0 &&
-        !(Phi.parse(PhiStr, "x") && Psi.parse(PsiStr, "t")) &&
-        F.parse(FStr, "t", "x")) {
+        !(Phi.parse(PhiStr, "x") && Psi.parse(PsiStr, "t") &&
+          F.parse(FStr, "t", "x"))) {
       std::cerr << "Fatal error: root was able to parse function expressions, "
                    "but this process failed to"
                 << std::endl;
@@ -354,13 +361,13 @@ int main(int argc, char *argv[]) try {
   }
 
   mpi::Timer Tmr;
-  auto Res = compute(
-      X->value(), T->value(), M->value(), K->value(), Phi, Psi,
-      [](double, double) { return 0; }, Verbose->value());
+  auto Res = compute(X->value(), T->value(), M->value(), K->value(), Phi, Psi,
+                     F, Verbose->value());
   if (DumpData->value() && Res)
     std::cout << util::join(Res.data()) << std::endl;
   if (DumpTime->value() && mpi::commRank() == 0)
-    std::cout << std::fixed << std::setprecision(2) << Tmr.getElapsedTimeInSeconds() << "s" << std::endl;
+    std::cout << std::fixed << std::setprecision(2)
+              << Tmr.getElapsedTimeInSeconds() << "s" << std::endl;
   return 0;
 } catch (popl::invalid_option &e) {
   emitUsageError(e.what());

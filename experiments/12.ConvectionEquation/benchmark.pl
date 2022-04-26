@@ -35,5 +35,5 @@ run_benchmark(M => 4 << 10, K => 1 << 10);
 run_benchmark(M => 16 << 10, K => 1 << 10);
 run_benchmark(M => 64 << 10, K => 1 << 10);
 horizontal_line;
-run_benchmark(M => 16 << 10, K => 16 << 10, NProc => $_) for (1, 3, 4, 8, 16);
+run_benchmark(M => 16 << 10, K => 16 << 10, NProc => $_) for (1, 2, 3, 4, 8, 16);
 horizontal_line;
