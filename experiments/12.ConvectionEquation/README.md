@@ -29,6 +29,7 @@ incorrect results
 
 ## My benchmark results
 Run on 2.3 GHz Intel Core i5, 4 cores
+
 Without optimizations:
 ```
 --------------------------------------
