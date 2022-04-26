@@ -7,16 +7,15 @@ trap 'echo -- Build failed!!!' EXIT
 
 build_experiments() {
   script_path=$(dirname "$0")
-  pushd "$script_path/../experiments" >/dev/null
-  
-  for folder in *; do
-    pushd "$folder" >/dev/null
-    echo "-- Building experiments/$folder..."
-    make clean
-    make
-    popd >/dev/null
+  pushd "$script_path/.." >/dev/null
+  # I had to use find with full path because very is no readlink/realpath
+  # on OsX to display currently processed path in a pretty way
+  for file in $(find "$(pwd)/experiments" -name "Makefile"); do
+    dir=$(dirname $file)
+    echo "-- Building $dir..."
+    make -C $dir clean
+    make -C $dir
   done;
-
   popd >/dev/null
 }
 
@@ -36,6 +35,5 @@ run_unit_tests() {
 
 build_experiments
 run_unit_tests
-pwd
 echo "-- SUCCESS!"
 trap '' EXIT
