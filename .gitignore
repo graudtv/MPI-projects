@@ -33,4 +33,6 @@
 
 # Custom
 prog
+prog-linear
 *._*
+prog.dSYM
