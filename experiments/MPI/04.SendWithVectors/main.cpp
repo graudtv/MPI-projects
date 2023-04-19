@@ -36,6 +36,7 @@ int main(int argc, char *argv[]) {
     std::vector<int> Vec = {1, 2}; // checking that append mechanism works
     std::string Str;
 
+    /* MPI garantees ordering of messages from one sender */
     mpi::recv(Scalar, 0);
     mpi::recv(Array, 0);
     mpi::recv(StdArray, 0);
