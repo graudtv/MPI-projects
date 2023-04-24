@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.0.0 FATAL_ERROR)
 project(unit-tests)
 
 find_package(Catch2 3 REQUIRED)
-find_package(MPI REQUIRED)
+find_package(MPI REQUIRED C)
 
 add_executable(unit-tests
   WorkSplitter.test.cpp
@@ -11,10 +11,10 @@ add_executable(unit-tests
 
 target_include_directories(unit-tests PRIVATE
   ../..
-  ${MPI_CXX_INCLUDE_DIRS}
+  ${MPI_C_INCLUDE_DIRS}
 )
 
 target_link_libraries(unit-tests PRIVATE
   Catch2::Catch2WithMain
-  ${MPI_CXX_LIBRARIES}
+  ${MPI_C_LIBRARIES}
 )
