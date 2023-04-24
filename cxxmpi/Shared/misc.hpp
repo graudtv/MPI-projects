@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "../Support/Utilities.hpp"
 #include "Datatype.hpp"
 #include "DatatypeSelector.hpp"
 #include <iostream>
@@ -102,7 +103,7 @@ private:
   double InitialTime;
 };
 
-/* Small ostream manip for convenience 
+/* Small ostream manip for convenience
  * Example:
  * std::cout << whoami << ": Hello, world!" << std::endl;
  */
