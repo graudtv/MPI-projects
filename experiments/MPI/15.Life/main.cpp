@@ -1,12 +1,37 @@
 #include <SFML/Graphics.hpp>
 #include <fstream>
 #include <iostream>
+#include <cassert>
 #include <mutex>
 #include <thread>
 #include <imgui.h>
 #include <imgui-SFML.h>
+#include <cxxmpi/cxxmpi.hpp>
 
-enum Cell { Dead = 0, Alive = 1 };
+enum Cell : char { Dead = 0, Alive = 1 };
+enum class MPICommand : int { Gather, Step, Shutdown };
+
+template <> struct cxxmpi::DatatypeSelector<Cell, void> {
+  static MPI_Datatype getHandle() { return BuiltinTypeTraits<char>::getHandle(); }
+};
+
+template <> struct cxxmpi::DatatypeSelector<MPICommand, void> {
+  static MPI_Datatype getHandle() { return BuiltinTypeTraits<int>::getHandle(); }
+};
+
+struct CommandStats {
+  unsigned StepCount = 0;
+  sf::Time Duration = sf::seconds(0);
+};
+
+void showCommandStats(const char *Prefix, const CommandStats &Stats) {
+  if (Stats.StepCount) {
+    ImGui::Text("%s: %u steps in %d ms, %0lg steps/s", Prefix, Stats.StepCount,
+        Stats.Duration.asMilliseconds(), Stats.StepCount / Stats.Duration.asSeconds());
+  } else {
+    ImGui::Text("%s: not available", Prefix);
+  }
+}
 
 class GameMap {
   std::vector<Cell> Data;
@@ -27,7 +52,14 @@ public:
     Width = 0;
   }
 
+  const std::vector<Cell> &buf() const { return Data; }
+
   bool empty() const { return Data.empty(); }
+
+  void init(std::vector<Cell> Map, size_t MapWidth) {
+    Data = std::move(Map);
+    Width = MapWidth;
+  }
 
   void readFromStream(std::istream &Is) {
     clear();
@@ -42,6 +74,13 @@ public:
       std::transform(Input.begin(), Input.end(), std::back_inserter(Data),
                      [](char C) { return (C == 'x') ? Alive : Dead; });
     }
+  }
+
+  /* Get data from rows in range [Fst; Last) */
+  std::vector<Cell> extractRows(size_t Fst, size_t Last) {
+    std::vector<Cell> Result((Last - Fst) * getWidth());
+    std::copy(&Data[Fst * getWidth()], &Data[Last * getWidth()], Result.data());
+    return Result;
   }
 
   void readFromFile(const std::string &Path) {
@@ -68,8 +107,20 @@ public:
 };
 
 std::mutex GlobalAccess;
+/* Variables exported by vizualizer thread */
+std::condition_variable CommandAvail;
+volatile unsigned StepsToRun = 0;
+sf::Time StepDelayTime = sf::milliseconds(0);
+volatile bool Shutdown = false;
+
+/* Variables exported by MPI thread */
 GameMap GlobalMap;
+CommandStats LastCommandStats{};
+CommandStats TotalCommandStats{};
 bool ViewUpdateAvail = false;
+
+/* Part of global map on which MPI executor is working */
+GameMap LocalMap;
 
 void drawMap(sf::RenderTarget &Target, const GameMap &Map) {
   if (Map.empty())
@@ -104,10 +155,13 @@ void drawMap(sf::RenderTarget &Target, const GameMap &Map) {
 }
 
 void visualizer() {
-  sf::RenderWindow Win{sf::VideoMode{1600, 1200}, "Life Simulator"};
+  const auto CommSize = cxxmpi::commSize();
+  sf::RenderWindow Win{sf::VideoMode{1600, 400}, "Life Simulator"};
+  sf::RenderWindow CtlWin{sf::VideoMode{1000, 400}, "Life Simulator Control"};
+  CtlWin.setFramerateLimit(60);
   Win.setFramerateLimit(60);
 
-  if (!ImGui::SFML::Init(Win, /* loadDefaultFont=*/false)) {
+  if (!ImGui::SFML::Init(CtlWin, /* loadDefaultFont=*/false)) {
     std::cerr << "Failed to initialized Dear ImGui" << std::endl;
     exit(1);
   }
@@ -124,98 +178,244 @@ void visualizer() {
 
   GameMap Map;
   sf::Clock Tmr;
+  int StepCount = 10;
+  int StepDelay = 0;
+  CommandStats LastStats, TotalStats;
 
-  while (Win.isOpen()) {
+  while (Win.isOpen() && CtlWin.isOpen()) {
     auto ElapsedTime = Tmr.restart();
-    ImGui::SFML::Update(Win, ElapsedTime);
+    ImGui::SFML::Update(CtlWin, ElapsedTime);
 
     sf::Event E;
-    while (Win.pollEvent(E)) {
-      ImGui::SFML::ProcessEvent(Win, E);
+    while (Win.pollEvent(E))
       if (E.type == sf::Event::Closed)
         Win.close();
+    while (CtlWin.pollEvent(E)) {
+      ImGui::SFML::ProcessEvent(CtlWin, E);
+      if (E.type == sf::Event::Closed)
+        CtlWin.close();
     }
     {
       std::lock_guard<std::mutex> Lock{GlobalAccess};
       if (ViewUpdateAvail) {
         Map = GlobalMap;
+        LastStats = LastCommandStats;
+        TotalStats = TotalCommandStats;
         ViewUpdateAvail = false;
       }
     }
-    //ImGui::Begin("Simulation Control", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::SetNextWindowSize(ImVec2(700, 0), ImGuiCond_Always);
-    ImGui::Begin("Simulation Control");
+    ImGui::SetNextWindowSize(ImVec2(CtlWin.getSize().x, CtlWin.getSize().y), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+    constexpr auto WindowFlags = ImGuiWindowFlags_NoTitleBar |
+                                 ImGuiWindowFlags_NoResize |
+                                 ImGuiWindowFlags_NoMove;
+    ImGui::Begin("Simulation Control", nullptr, WindowFlags);
+    {
+      ImGui::Text("Status:");
+      ImGui::SameLine();
+      if (StepsToRun)
+        ImGui::TextColored(ImVec4{0, 1, 0, 1}, "running");
+      else
+        ImGui::TextColored(ImVec4{1, 1, 0, 1}, "pending");
+      ImGui::Separator();
 
-    ImGui::AlignTextToFramePadding();
-    ImGui::BulletText("single step");
-    ImGui::SameLine();
-    ImGui::Button("run");
+      ImGui::AlignTextToFramePadding();
+      ImGui::BulletText("single step");
+      ImGui::SameLine();
+      if (ImGui::Button("run##0")) {
+        std::lock_guard<std::mutex> Lock{GlobalAccess};
+        if (!StepsToRun) {
+          StepsToRun = 1;
+          StepDelayTime = sf::milliseconds(0);
+          CommandAvail.notify_one();
+        }
+      }
 
-    ImGui::AlignTextToFramePadding();
-    ImGui::BulletText("multistep");
-    ImGui::SameLine();
-    ImGui::Button("run");
-    ImGui::Indent();
-    ImGui::Text("count");
-    ImGui::Text("delay");
-    ImGui::Unindent();
+      ImGui::AlignTextToFramePadding();
+      ImGui::BulletText("multistep");
+      ImGui::SameLine();
+      if (ImGui::Button("run##1")) {
+        std::lock_guard<std::mutex> Lock{GlobalAccess};
+        if (!StepsToRun) {
+          StepsToRun = StepCount;
+          StepDelayTime = sf::milliseconds(StepDelay);
+          CommandAvail.notify_one();
+        }
+      }
+      ImGui::Indent();
+      if (ImGui::InputInt("count", &StepCount) && StepCount < 1)
+        StepCount = 1;
+      if (ImGui::InputInt("delay (ms)", &StepDelay) && StepDelay < 0)
+        StepDelay = 0;
+      ImGui::Unindent();
 
-    //ImGui::BulletText("status");
-    //ImGui::Indent();
-    //ImGui::NewLine();
-    ImGui::Separator();
-    static int i = 0;
-    if (i > 300)
-      i = 0;
-    ImGui::Text("Last command: 10 steps in %d ms, 10.0 steps/s", ++i);
-    ImGui::Text("Total: 1000 steps in 2.2 s, 9.2 steps/s");
-    //ImGui::Unindent();
-#if 0
-    if (ImGui::TreeNode("single step")) {
-      if (ImGui::Button("step"))
-        std::cout << "single step" << std::endl;
-      ImGui::TreePop();
+      ImGui::Separator();
+      ImGui::Text("Running on %d MPI executor%s", CommSize, CommSize > 1 ? "s" : "");
+      showCommandStats("Last command", LastStats);
+      showCommandStats("Total", TotalStats);
     }
-    if (ImGui::TreeNode("multistep")) {
-      if (ImGui::Button("steps"))
-        std::cout << "step" << std::endl;
-      ImGui::TreePop();
-    }
-#endif
     ImGui::End();
 
     Win.clear(sf::Color::White);
     drawMap(Win, Map);
 
     Win.setView(Win.getDefaultView());
-    ImGui::SFML::Render(Win);
     Win.display();
+
+    CtlWin.clear(sf::Color::White);
+    ImGui::SFML::Render(CtlWin);
+    CtlWin.display();
   }
   ImGui::SFML::Shutdown();
-  exit(0);
+
+  std::lock_guard<std::mutex> Lock{GlobalAccess};
+  Shutdown = true;
+  CommandAvail.notify_one();
 }
 
-void cli() {
-  std::this_thread::sleep_for(std::chrono::seconds(2));
-
-  {
+/* Scatter GlobalMap on root MPI executor to others */
+void mpiScatterGameMap() {
+  GameMap MapToSend;
+  if (cxxmpi::commRank() == 0) {
     std::lock_guard<std::mutex> Lock{GlobalAccess};
-    GlobalMap.readFromFile("../assets/2.txt");
-    ViewUpdateAvail = true;
+    MapToSend = GlobalMap;
   }
+  size_t MapWidth = MapToSend.getWidth();
+  cxxmpi::bcast(MapWidth, 0);
 
-  std::this_thread::sleep_for(std::chrono::seconds(2));
-  {
+  if (cxxmpi::commRank() == 0) {
+    auto WorkerCount = cxxmpi::commSize();
+    auto Splitter = util::WorkSplitterLinear(MapToSend.getHeight(), WorkerCount);
+
+    for (unsigned I = 1; I < WorkerCount; ++I) {
+      auto Rows = Splitter.getRange(I);
+      auto Data = MapToSend.extractRows(Rows.FirstIdx, Rows.LastIdx);
+      cxxmpi::send(Data, I);
+    }
+    auto Rows = Splitter.getRange(0);
+    LocalMap.init(MapToSend.extractRows(Rows.FirstIdx, Rows.LastIdx), MapWidth);
+  } else {
+    std::vector<Cell> Buf;
+    cxxmpi::recv(Buf, 0);
+    LocalMap.init(std::move(Buf), MapWidth);
+  }
+  std::cout << cxxmpi::whoami << ": init local map " << LocalMap.getWidth() << " x " << LocalMap.getHeight() << std::endl;
+#if 0
+  for (size_t I = 0; I < LocalMap.getHeight(); ++I) {
+    std::cout << cxxmpi::whoami << ": ";
+    for (size_t J = 0; J < LocalMap.getWidth(); ++J)
+      std::cout << (LocalMap(I, J) ? 'x' : '.');
+    std::cout << std::endl;
+  }
+#endif
+}
+
+/* Receive local maps from MPI executors and put them into GlobalMap on root */
+void mpiGatherGameMap() {
+  std::cout << cxxmpi::whoami << ": gather" << std::endl;
+
+  if (auto Res = cxxmpi::gatherv(LocalMap.buf())) {
     std::lock_guard<std::mutex> Lock{GlobalAccess};
-    GlobalMap.readFromFile("../assets/1.txt");
+    GlobalMap.init(Res.takeData(), LocalMap.getWidth());
     ViewUpdateAvail = true;
   }
 }
 
-int main() {
-  std::thread CLI{cli};
-  visualizer();
+void mpiStep() {
+  static int i = 0;
+  LocalMap(LocalMap.getHeight() - 1, i++ % LocalMap.getWidth()) = Alive;
 
-  CLI.join();
+  std::cout << cxxmpi::whoami << ": step" << std::endl;
+}
+
+void mpiRoot() {
+  unsigned StepCount = 0;
+  sf::Time StepDelay{};
+  MPICommand Cmd;
+
+  mpiScatterGameMap();
+  while (1) {
+    {
+      std::unique_lock<std::mutex> Lock{GlobalAccess};
+      CommandAvail.wait(Lock, [](){ return StepsToRun || Shutdown; });
+      StepCount = StepsToRun;
+      StepDelay = StepDelayTime;
+    }
+    if (Shutdown) {
+      cxxmpi::bcast((Cmd = MPICommand::Shutdown), 0);
+      return;
+    }
+
+    sf::Time ExecutionTime{};
+
+    for (unsigned I = 0; I < StepCount; ++I) {
+      if (Shutdown) {
+        cxxmpi::bcast((Cmd = MPICommand::Shutdown), 0);
+        return;
+      }
+
+      sf::Clock Tmr;
+      cxxmpi::bcast((Cmd = MPICommand::Step), 0);
+      mpiStep();
+      ExecutionTime += Tmr.getElapsedTime();
+
+      /* Handle interactive mode (i.e. multistep mode with nonzero delay) */
+      if (StepDelay > sf::seconds(0)) {
+        cxxmpi::bcast((Cmd = MPICommand::Gather), 0);
+        mpiGatherGameMap();
+        auto TimeToSleep = StepDelay - Tmr.getElapsedTime();
+        if (TimeToSleep > sf::seconds(0))
+          sf::sleep(TimeToSleep);
+      }
+    }
+
+    cxxmpi::bcast((Cmd = MPICommand::Gather), 0);
+    mpiGatherGameMap();
+    {
+      std::lock_guard<std::mutex> Lock{GlobalAccess};
+      LastCommandStats.StepCount = StepCount;
+      LastCommandStats.Duration = ExecutionTime;
+      TotalCommandStats.StepCount += StepCount;
+      TotalCommandStats.Duration += ExecutionTime;
+      ViewUpdateAvail = true;
+      StepsToRun = 0;
+    }
+  }
+}
+
+void mpiSecondary() {
+  mpiScatterGameMap();
+  while (1) {
+    MPICommand Cmd;
+    cxxmpi::bcast(Cmd, 0);
+    if (Cmd == MPICommand::Shutdown)
+      return;
+    if (Cmd == MPICommand::Gather) {
+      mpiGatherGameMap();
+      continue;
+    }
+    if (Cmd == MPICommand::Step) {
+      mpiStep();
+      continue;
+    }
+    assert(0 && "unknown command");
+  }
+}
+
+int main(int argc, char *argv[]) {
+  cxxmpi::MPIContext Ctx{&argc, &argv};
+  if (cxxmpi::commRank() == 0) {
+    if (argc != 2) {
+      std::cerr << "Usage: " << argv[0] << " <path_to_map>" << std::endl;
+      exit(1);
+    }
+    GlobalMap.readFromFile(argv[1]);
+    ViewUpdateAvail = true;
+
+    std::thread MPI{mpiRoot};
+    visualizer();
+    MPI.join();
+  } else
+    mpiSecondary();
   return 0;
 }
