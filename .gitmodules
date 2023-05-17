@@ -4,3 +4,6 @@
 [submodule "external/popl"]
 	path = external/popl
 	url = https://github.com/badaix/popl
+[submodule "external/imgui-sfml"]
+	path = external/imgui-sfml
+	url = https://github.com/SFML/imgui-sfml

@@ -1,22 +1,26 @@
 #include <SFML/Graphics.hpp>
-#include <fstream>
-#include <iostream>
 #include <cassert>
+#include <cxxmpi/cxxmpi.hpp>
+#include <fstream>
+#include <imgui-SFML.h>
+#include <imgui.h>
+#include <iostream>
 #include <mutex>
 #include <thread>
-#include <imgui.h>
-#include <imgui-SFML.h>
-#include <cxxmpi/cxxmpi.hpp>
 
 enum Cell : char { Dead = 0, Alive = 1 };
 enum class MPICommand : int { Gather, Step, Shutdown };
 
 template <> struct cxxmpi::DatatypeSelector<Cell, void> {
-  static MPI_Datatype getHandle() { return BuiltinTypeTraits<char>::getHandle(); }
+  static MPI_Datatype getHandle() {
+    return BuiltinTypeTraits<char>::getHandle();
+  }
 };
 
 template <> struct cxxmpi::DatatypeSelector<MPICommand, void> {
-  static MPI_Datatype getHandle() { return BuiltinTypeTraits<int>::getHandle(); }
+  static MPI_Datatype getHandle() {
+    return BuiltinTypeTraits<int>::getHandle();
+  }
 };
 
 struct CommandStats {
@@ -27,7 +31,8 @@ struct CommandStats {
 void showCommandStats(const char *Prefix, const CommandStats &Stats) {
   if (Stats.StepCount) {
     ImGui::Text("%s: %u steps in %d ms, %0lg steps/s", Prefix, Stats.StepCount,
-        Stats.Duration.asMilliseconds(), Stats.StepCount / Stats.Duration.asSeconds());
+                Stats.Duration.asMilliseconds(),
+                Stats.StepCount / Stats.Duration.asSeconds());
   } else {
     ImGui::Text("%s: not available", Prefix);
   }
@@ -61,6 +66,13 @@ public:
     Width = MapWidth;
   }
 
+  void append(const std::vector<Cell> &Rows) {
+    if (Data.empty())
+      Width = Rows.size();
+    assert((Rows.size() % Width == 0) && "Row size mismatch");
+    std::copy(Rows.begin(), Rows.end(), std::back_inserter(Data));
+  }
+
   void readFromStream(std::istream &Is) {
     clear();
     std::string Input;
@@ -77,11 +89,13 @@ public:
   }
 
   /* Get data from rows in range [Fst; Last) */
-  std::vector<Cell> extractRows(size_t Fst, size_t Last) {
+  std::vector<Cell> extractRows(size_t Fst, size_t Last) const {
     std::vector<Cell> Result((Last - Fst) * getWidth());
     std::copy(&Data[Fst * getWidth()], &Data[Last * getWidth()], Result.data());
     return Result;
   }
+
+  std::vector<Cell> extractRow(size_t Idx) const { return extractRows(Idx, Idx + 1); }
 
   void readFromFile(const std::string &Path) {
     std::ifstream Is{Path};
@@ -106,6 +120,21 @@ public:
   }
 };
 
+#if 0
+void dumpMap(const GameMap &Map) {
+  for (size_t I = 0; I < Map.getHeight(); ++I) {
+    std::cout << cxxmpi::whoami << ": ";
+    for (size_t J = 0; J < Map.getWidth(); ++J)
+      std::cout << (Map(I, J) ? 'x' : '.');
+    std::cout << std::endl;
+  }
+}
+#define dbg() std::cout
+#else
+void dumpMap(const GameMap &) {}
+#define dbg() if (0) std::cout
+#endif
+
 std::mutex GlobalAccess;
 /* Variables exported by vizualizer thread */
 std::condition_variable CommandAvail;
@@ -127,15 +156,15 @@ void drawMap(sf::RenderTarget &Target, const GameMap &Map) {
     return;
 
   /* Adjust sf::View to fit map into the window */
-  constexpr float BorderRatio = 0.05;                                             
-  auto Scale =                                                                   
-      (1 - BorderRatio) * std::min(Target.getSize().x / Map.getWidth(),            
-                                   Target.getSize().y / Map.getHeight());          
-  sf::View V{sf::FloatRect(0, 0, Map.getWidth(), Map.getHeight())};                                                         
-  float WidthRatio = (Map.getWidth() * Scale) / Target.getSize().x;                
-  float HeightRatio = (Map.getHeight() * Scale) / Target.getSize().y;              
-  V.setViewport(sf::FloatRect{(1 - WidthRatio) / 2, (1 - HeightRatio) / 2,       
-                              WidthRatio, HeightRatio});                         
+  constexpr float BorderRatio = 0.05;
+  auto Scale =
+      (1 - BorderRatio) * std::min(Target.getSize().x / Map.getWidth(),
+                                   Target.getSize().y / Map.getHeight());
+  sf::View V{sf::FloatRect(0, 0, Map.getWidth(), Map.getHeight())};
+  float WidthRatio = (Map.getWidth() * Scale) / Target.getSize().x;
+  float HeightRatio = (Map.getHeight() * Scale) / Target.getSize().y;
+  V.setViewport(sf::FloatRect{(1 - WidthRatio) / 2, (1 - HeightRatio) / 2,
+                              WidthRatio, HeightRatio});
   Target.setView(V);
 
   sf::RectangleShape Rect{sf::Vector2f{1, 1}};
@@ -143,9 +172,24 @@ void drawMap(sf::RenderTarget &Target, const GameMap &Map) {
   for (size_t I = 0; I < Map.getHeight(); ++I)
     for (size_t J = 0; J < Map.getWidth(); ++J) {
       Rect.setPosition(J, I);
-      Rect.setFillColor(Map(I, J) ? sf::Color::Black : sf::Color{240, 240, 240});
+      Rect.setFillColor(Map(I, J) ? sf::Color::Black
+                                  : sf::Color{240, 240, 240});
       Target.draw(Rect);
     }
+  /* Horizontal grid lines */
+  for (size_t I = 1; I < Map.getHeight(); ++I) {
+    sf::Vertex Line[] = {
+        sf::Vertex{sf::Vector2f(0, I), sf::Color::Black},
+        sf::Vertex{sf::Vector2f(Map.getWidth(), I), sf::Color::Black}};
+    Target.draw(Line, sizeof(Line) / sizeof(Line[0]), sf::Lines);
+  }
+  /* Vertical grid lines */
+  for (size_t J = 1; J < Map.getWidth(); ++J) {
+    sf::Vertex Line[] = {
+        sf::Vertex{sf::Vector2f(J, 0), sf::Color::Black},
+        sf::Vertex{sf::Vector2f(J, Map.getWidth()), sf::Color::Black}};
+    Target.draw(Line, sizeof(Line) / sizeof(Line[0]), sf::Lines);
+  }
 
   sf::RectangleShape Frame{sf::Vector2f(Map.getWidth(), Map.getHeight())};
   Frame.setOutlineColor(sf::Color::Green);
@@ -156,8 +200,8 @@ void drawMap(sf::RenderTarget &Target, const GameMap &Map) {
 
 void visualizer() {
   const auto CommSize = cxxmpi::commSize();
-  sf::RenderWindow Win{sf::VideoMode{1600, 400}, "Life Simulator"};
-  sf::RenderWindow CtlWin{sf::VideoMode{1000, 400}, "Life Simulator Control"};
+  sf::RenderWindow Win{sf::VideoMode{1600, 1200}, "Game Of Life"};
+  sf::RenderWindow CtlWin{sf::VideoMode{1000, 400}, "Game Of Life Control"};
   CtlWin.setFramerateLimit(60);
   Win.setFramerateLimit(60);
 
@@ -170,7 +214,8 @@ void visualizer() {
   ImGui::StyleColorsDark();
   ImGui::GetStyle().ScaleAllSizes(2.0f);
 
-  IO.Fonts->AddFontFromFileTTF("../../../../external/imgui/misc/fonts/DroidSans.ttf", 32);
+  IO.Fonts->AddFontFromFileTTF(
+      "../../../../external/imgui/misc/fonts/DroidSans.ttf", 32);
   if (!ImGui::SFML::UpdateFontTexture()) {
     std::cerr << "Failed to load font" << std::endl;
     exit(1);
@@ -204,7 +249,8 @@ void visualizer() {
         ViewUpdateAvail = false;
       }
     }
-    ImGui::SetNextWindowSize(ImVec2(CtlWin.getSize().x, CtlWin.getSize().y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(CtlWin.getSize().x, CtlWin.getSize().y),
+                             ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     constexpr auto WindowFlags = ImGuiWindowFlags_NoTitleBar |
                                  ImGuiWindowFlags_NoResize |
@@ -250,7 +296,8 @@ void visualizer() {
       ImGui::Unindent();
 
       ImGui::Separator();
-      ImGui::Text("Running on %d MPI executor%s", CommSize, CommSize > 1 ? "s" : "");
+      ImGui::Text("Running on %d MPI executor%s", CommSize,
+                  CommSize > 1 ? "s" : "");
       showCommandStats("Last command", LastStats);
       showCommandStats("Total", TotalStats);
     }
@@ -285,7 +332,8 @@ void mpiScatterGameMap() {
 
   if (cxxmpi::commRank() == 0) {
     auto WorkerCount = cxxmpi::commSize();
-    auto Splitter = util::WorkSplitterLinear(MapToSend.getHeight(), WorkerCount);
+    auto Splitter =
+        util::WorkSplitterLinear(MapToSend.getHeight(), WorkerCount);
 
     for (unsigned I = 1; I < WorkerCount; ++I) {
       auto Rows = Splitter.getRange(I);
@@ -299,21 +347,14 @@ void mpiScatterGameMap() {
     cxxmpi::recv(Buf, 0);
     LocalMap.init(std::move(Buf), MapWidth);
   }
-  std::cout << cxxmpi::whoami << ": init local map " << LocalMap.getWidth() << " x " << LocalMap.getHeight() << std::endl;
-#if 0
-  for (size_t I = 0; I < LocalMap.getHeight(); ++I) {
-    std::cout << cxxmpi::whoami << ": ";
-    for (size_t J = 0; J < LocalMap.getWidth(); ++J)
-      std::cout << (LocalMap(I, J) ? 'x' : '.');
-    std::cout << std::endl;
-  }
-#endif
+  std::cout << cxxmpi::whoami << ": init local map " << LocalMap.getWidth()
+            << " x " << LocalMap.getHeight() << std::endl;
+  dumpMap(LocalMap);
 }
 
 /* Receive local maps from MPI executors and put them into GlobalMap on root */
 void mpiGatherGameMap() {
-  std::cout << cxxmpi::whoami << ": gather" << std::endl;
-
+  // std::cout << cxxmpi::whoami << ": gather" << std::endl;
   if (auto Res = cxxmpi::gatherv(LocalMap.buf())) {
     std::lock_guard<std::mutex> Lock{GlobalAccess};
     GlobalMap.init(Res.takeData(), LocalMap.getWidth());
@@ -322,10 +363,64 @@ void mpiGatherGameMap() {
 }
 
 void mpiStep() {
-  static int i = 0;
-  LocalMap(LocalMap.getHeight() - 1, i++ % LocalMap.getWidth()) = Alive;
+  dbg() << cxxmpi::whoami << ": step" << std::endl;
+  const auto CommRank = cxxmpi::commRank();
+  const auto CommSize = cxxmpi::commSize();
+  /* Lower = lower index, Higher = higher index */
+  const auto LowerNeighbor = (CommRank + CommSize - 1) % CommSize;
+  const auto UpperNeighbor = (CommRank + 1) % CommSize;
+  const auto MapWidth = LocalMap.getWidth();
 
-  std::cout << cxxmpi::whoami << ": step" << std::endl;
+  const auto extractLowerRow = [](const GameMap &Map) {
+    return Map.extractRow(0);
+  };
+  const auto extractUpperRow = [](const GameMap &Map) {
+    return Map.extractRow(Map.getHeight() - 1);
+  };
+
+  std::vector<Cell> LowerRow;
+  std::vector<Cell> UpperRow;
+
+  if (cxxmpi::commSize() > 1) {
+    if (cxxmpi::commRank() % 2 == 0) {
+      cxxmpi::send(extractLowerRow(LocalMap), LowerNeighbor);
+      cxxmpi::send(extractUpperRow(LocalMap), UpperNeighbor);
+      cxxmpi::recv(UpperRow, UpperNeighbor);
+      cxxmpi::recv(LowerRow, LowerNeighbor);
+    } else {
+      cxxmpi::recv(UpperRow, UpperNeighbor);
+      cxxmpi::recv(LowerRow, LowerNeighbor);
+      cxxmpi::send(extractLowerRow(LocalMap), LowerNeighbor);
+      cxxmpi::send(extractUpperRow(LocalMap), UpperNeighbor);
+    }
+  } else {
+    LowerRow = extractUpperRow(LocalMap);
+    UpperRow = extractLowerRow(LocalMap);
+  }
+
+  GameMap Map;
+  Map.append(LowerRow);
+  Map.append(LocalMap.buf());
+  Map.append(UpperRow);
+
+  dumpMap(Map);
+
+  auto lcell = [=](unsigned J) { return (J + MapWidth - 1) % MapWidth; };
+  auto rcell = [=](unsigned J) { return (J + 1) % MapWidth; };
+  auto calcIsAlive = [](bool WasAlive, unsigned AliveNeighbors) {
+    if (WasAlive)
+      return (AliveNeighbors == 2 || AliveNeighbors == 3) ? Alive : Dead;
+    return (AliveNeighbors == 3) ? Alive : Dead;
+  };
+
+  for (size_t I = 1; I + 1 < Map.getHeight(); ++I)
+    for (size_t J = 0; J < MapWidth; ++J) {
+      unsigned AliveCount = Map(I - 1, lcell(J)) + Map(I - 1, J) +
+                            Map(I - 1, rcell(J)) + Map(I, lcell(J)) +
+                            Map(I, rcell(J)) + Map(I + 1, lcell(J)) +
+                            Map(I + 1, J) + Map(I + 1, rcell(J));
+      LocalMap(I - 1, J) = calcIsAlive(Map(I, J), AliveCount);
+    }
 }
 
 void mpiRoot() {
@@ -337,7 +432,7 @@ void mpiRoot() {
   while (1) {
     {
       std::unique_lock<std::mutex> Lock{GlobalAccess};
-      CommandAvail.wait(Lock, [](){ return StepsToRun || Shutdown; });
+      CommandAvail.wait(Lock, []() { return StepsToRun || Shutdown; });
       StepCount = StepsToRun;
       StepDelay = StepDelayTime;
     }
@@ -387,7 +482,9 @@ void mpiSecondary() {
   mpiScatterGameMap();
   while (1) {
     MPICommand Cmd;
+    dbg() << cxxmpi::whoami << ": waiting for command" << std::endl;
     cxxmpi::bcast(Cmd, 0);
+    dbg() << cxxmpi::whoami << ": command received" << std::endl;
     if (Cmd == MPICommand::Shutdown)
       return;
     if (Cmd == MPICommand::Gather) {

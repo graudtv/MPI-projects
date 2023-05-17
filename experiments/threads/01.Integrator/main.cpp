@@ -198,13 +198,13 @@ void emitUsageError(const char *Msg) {
 #ifndef EXPR
       R"(
 Examples:
-  ./integrate --expr 'x ^ 2' --from 0 --to 3
+  ./integrate --expr 'x ^ 2' --from 0 --to 3 --linear-recursive
   ./integrate --expr 'sin(x)' --from 0 --to 1 --eps 0.001 --parallel 8
 )";
 #else
       R"(
 Examples:
-  ./integrate --from 0 --to 3
+  ./integrate --from 0 --to 3 --linear-recursive
   ./integrate --from 0 --to 1 --eps 0.001 --parallel 8
 )";
 #endif
