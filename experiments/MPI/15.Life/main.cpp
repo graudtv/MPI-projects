@@ -141,6 +141,7 @@ std::condition_variable CommandAvail;
 volatile unsigned StepsToRun = 0;
 sf::Time StepDelayTime = sf::milliseconds(0);
 volatile bool Shutdown = false;
+volatile bool CancelTask = false;
 
 /* Variables exported by MPI thread */
 GameMap GlobalMap;
@@ -201,7 +202,7 @@ void drawMap(sf::RenderTarget &Target, const GameMap &Map) {
 void visualizer() {
   const auto CommSize = cxxmpi::commSize();
   sf::RenderWindow Win{sf::VideoMode{1600, 1200}, "Game Of Life"};
-  sf::RenderWindow CtlWin{sf::VideoMode{1000, 400}, "Game Of Life Control"};
+  sf::RenderWindow CtlWin{sf::VideoMode{1000, 500}, "Game Of Life Control"};
   CtlWin.setFramerateLimit(60);
   Win.setFramerateLimit(60);
 
@@ -223,8 +224,8 @@ void visualizer() {
 
   GameMap Map;
   sf::Clock Tmr;
-  int StepCount = 10;
-  int StepDelay = 0;
+  int StepCount = 1000;
+  int StepDelay = 100;
   CommandStats LastStats, TotalStats;
 
   while (Win.isOpen() && CtlWin.isOpen()) {
@@ -280,6 +281,7 @@ void visualizer() {
       ImGui::AlignTextToFramePadding();
       ImGui::BulletText("multistep");
       ImGui::SameLine();
+      ImGui::BeginDisabled(StepsToRun > 1);
       if (ImGui::Button("run##1")) {
         std::lock_guard<std::mutex> Lock{GlobalAccess};
         if (!StepsToRun) {
@@ -288,6 +290,14 @@ void visualizer() {
           CommandAvail.notify_one();
         }
       }
+      ImGui::EndDisabled();
+
+      ImGui::BeginDisabled(StepsToRun <= 1);
+      ImGui::SameLine();
+      if (ImGui::Button("cancel"))
+        CancelTask = true;
+      ImGui::EndDisabled();
+
       ImGui::Indent();
       if (ImGui::InputInt("count", &StepCount) && StepCount < 1)
         StepCount = 1;
@@ -443,11 +453,15 @@ void mpiRoot() {
 
     sf::Time ExecutionTime{};
 
-    for (unsigned I = 0; I < StepCount; ++I) {
+    CancelTask = false;
+    unsigned Step;
+    for (Step = 0; Step < StepCount; ++Step) {
       if (Shutdown) {
         cxxmpi::bcast((Cmd = MPICommand::Shutdown), 0);
         return;
       }
+      if (CancelTask)
+        break;
 
       sf::Clock Tmr;
       cxxmpi::bcast((Cmd = MPICommand::Step), 0);
@@ -468,9 +482,9 @@ void mpiRoot() {
     mpiGatherGameMap();
     {
       std::lock_guard<std::mutex> Lock{GlobalAccess};
-      LastCommandStats.StepCount = StepCount;
+      LastCommandStats.StepCount = Step;
       LastCommandStats.Duration = ExecutionTime;
-      TotalCommandStats.StepCount += StepCount;
+      TotalCommandStats.StepCount += Step;
       TotalCommandStats.Duration += ExecutionTime;
       ViewUpdateAvail = true;
       StepsToRun = 0;
