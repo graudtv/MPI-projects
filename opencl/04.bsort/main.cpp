@@ -6,6 +6,7 @@
 #include <iostream>
 #include <random>
 #include <vector>
+#include <cassert>
 
 /***** Begin OpenCL kernels *****/
 std::string ProgramSource = R"(
